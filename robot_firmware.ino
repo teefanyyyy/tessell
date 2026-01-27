@@ -1,0 +1,158 @@
+#include <driver/i2s.h>
+#include <Wire.h> 
+#include <LiquidCrystal_I2C.h>
+
+#define I2S_WS 15
+#define I2S_SD 32
+#define I2S_SCK 14
+#define I2S_PORT I2S_NUM_0
+#define BUZZER_PIN 4
+
+#define BUZZER_VOLUME 225
+#define BUZZER_FREQ 2000   
+#define BUZZER_RES 8       
+
+LiquidCrystal_I2C lcd(0x27, 16, 2); 
+
+#define SAMPLE_RATE 16000
+#define BUFFER_LEN 512
+#define SOUND_THRESHOLD 3000   
+#define SILENCE_DURATION 1200 
+
+#define PRE_BUF_SIZE 4000 
+int16_t preBuffer[PRE_BUF_SIZE];
+volatile int preBufferHead = 0; 
+
+volatile bool isRecording = false;
+volatile int32_t currentVolume = 0;
+
+TaskHandle_t Task1;
+
+void setup() {
+  Serial.begin(921600);
+  
+  // Turn off buzzer IMMEDIATELY before anything else
+  pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, HIGH);  // Ensure buzzer is OFF
+  
+  lcd.init(); lcd.backlight();
+
+  ledcAttach(BUZZER_PIN, BUZZER_FREQ, BUZZER_RES);
+  ledcWrite(BUZZER_PIN, 255); // Turn buzzer OFF (inverted logic)
+
+  const i2s_config_t i2s_config = {
+    .mode = i2s_mode_t(I2S_MODE_MASTER | I2S_MODE_RX),
+    .sample_rate = SAMPLE_RATE,
+    .bits_per_sample = I2S_BITS_PER_SAMPLE_32BIT,
+    .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT, 
+    .communication_format = i2s_comm_format_t(I2S_COMM_FORMAT_I2S | I2S_COMM_FORMAT_I2S_MSB),
+    .intr_alloc_flags = 0, .dma_buf_count = 8, .dma_buf_len = BUFFER_LEN, .use_apll = false
+  };
+  i2s_driver_install(I2S_PORT, &i2s_config, 0, NULL);
+  const i2s_pin_config_t pin_config = { .bck_io_num = I2S_SCK, .ws_io_num = I2S_WS, .data_out_num = -1, .data_in_num = I2S_SD };
+  i2s_set_pin(I2S_PORT, &pin_config);
+  i2s_start(I2S_PORT);
+
+  memset(preBuffer, 0, sizeof(preBuffer));
+  lcd.setCursor(0,0); lcd.print("System Ready");
+  
+  xTaskCreatePinnedToCore(MicTask, "MicTask", 10000, NULL, 1, &Task1, 0); 
+}
+
+// core 0 mic 
+void MicTask(void * parameter) {
+  size_t bytes_read;
+  int32_t raw_buffer[BUFFER_LEN];
+  
+  for(;;) { 
+    i2s_read(I2S_PORT, &raw_buffer, BUFFER_LEN * 4, &bytes_read, portMAX_DELAY);
+    
+    if (bytes_read > 0) {
+      long sum = 0;
+      int16_t processed_chunk[BUFFER_LEN];
+
+      for (int i = 0; i < bytes_read / 4; i++) {
+        int16_t val = raw_buffer[i] >> 10; 
+        processed_chunk[i] = val;
+        sum += abs(val);
+
+        if (!isRecording) {
+          preBuffer[preBufferHead] = val;
+          preBufferHead++;
+          if (preBufferHead >= PRE_BUF_SIZE) preBufferHead = 0;
+        }
+      }
+      currentVolume = sum / (bytes_read / 4);
+
+      if (isRecording) {
+         Serial.write((const uint8_t *)processed_chunk, (bytes_read / 4) * 2);
+      }
+    }
+  }
+}
+
+// core 1 main
+void loop() {
+  static unsigned long lastAudioTime = 0;
+
+  if (Serial.available() > 0) {
+    String msg = Serial.readStringUntil('\n');
+    msg.trim();
+    if (msg == "PYTHON_READY") { 
+      // Python connected, do nothing (no beep)
+    }
+    else if (msg == "SEARCHING") { lcd.clear(); lcd.print("Searching..."); }
+    else if (msg == "FOUND") { 
+      lcd.clear(); lcd.print("File Found!"); 
+      
+      // Beep twice to indicate file found
+      ledcWrite(BUZZER_PIN, BUZZER_VOLUME); delay(100); ledcWrite(BUZZER_PIN, 255);
+      delay(100);
+      ledcWrite(BUZZER_PIN, BUZZER_VOLUME); delay(100); ledcWrite(BUZZER_PIN, 255);
+    }
+    else if (msg == "NOTFOUND") { 
+      lcd.clear(); lcd.print("Not Found"); 
+      delay(2000);
+      lcd.clear(); lcd.print("System Ready");
+    }
+    else if (msg == "ASK_CONFIRM") {
+      lcd.clear(); lcd.print("Say OPEN/CLOSE");
+    }
+    else if (msg == "OPENED") {
+      lcd.clear(); lcd.print("Opening File...");
+      delay(1500);
+      lcd.clear(); lcd.print("System Ready");
+    }
+    else if (msg == "CANCELLED") {
+      lcd.clear(); lcd.print("Cancelled");
+      delay(1500);
+      lcd.clear(); lcd.print("System Ready");
+    }
+    else if (msg == "ERROR") {
+      lcd.clear(); lcd.print("Error!");
+      delay(2000);
+      lcd.clear(); lcd.print("System Ready");
+    }
+  }
+
+  if (!isRecording && currentVolume > SOUND_THRESHOLD) {
+    isRecording = true;
+    Serial.print("START_REC\n");
+    lastAudioTime = millis();
+    lcd.clear(); lcd.print("Listening...");
+
+    int len1 = PRE_BUF_SIZE - preBufferHead;
+    if (len1 > 0) Serial.write((const uint8_t *)&preBuffer[preBufferHead], len1 * 2);
+    if (preBufferHead > 0) Serial.write((const uint8_t *)&preBuffer[0], preBufferHead * 2);
+    
+    while (isRecording) {
+      if (currentVolume > SOUND_THRESHOLD) lastAudioTime = millis();
+      if (millis() - lastAudioTime > SILENCE_DURATION) {
+        isRecording = false;
+        Serial.print("STOP_REC");
+        lcd.clear(); lcd.print("System Ready");
+      }
+      delay(10); 
+    }
+  }
+}
