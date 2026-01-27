@@ -17,7 +17,7 @@ LiquidCrystal_I2C lcd(0x27, 16, 2);
 #define SAMPLE_RATE 16000
 #define BUFFER_LEN 512
 #define SOUND_THRESHOLD 3000   
-#define SILENCE_DURATION 1200 
+#define SILENCE_DURATION 1500 
 
 #define PRE_BUF_SIZE 4000 
 int16_t preBuffer[PRE_BUF_SIZE];
