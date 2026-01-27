@@ -13,6 +13,7 @@ from tkinter import filedialog, scrolledtext
 import threading
 import socket
 
+# --- CONFIGURATION ---
 BAUD = 921600                
 TEMP_WAV = "temp_audio.wav"
 MAX_GOOGLE_LATENCY = 2.0
@@ -29,7 +30,7 @@ THEME = {
     "accent_red": "#c94c4c",
 }
 
-# exe
+# exe helper
 def resource_path(relative_path):
     try:
         base_path = sys._MEIPASS
@@ -46,6 +47,9 @@ class VoiceFileFinderGUI:
         self.root.resizable(False, False)
         self.root.configure(bg=THEME["bg_main"])
         
+        # uncom for icon
+        # self.root.iconbitmap("icon.ico")
+        
         self.search_path = None
         self.ser = None
         self.running = False
@@ -53,11 +57,10 @@ class VoiceFileFinderGUI:
         self.components_ready = False
         self.vosk_model = None
         self.google_recognizer = None
-        self.use_google = True 
         
         header_frame = tk.Frame(root, bg=THEME["bg_header"], height=140)
         header_frame.pack(fill=tk.X, side=tk.TOP)
-        header_frame.pack_propagate(False) # Prevents shrinking
+        header_frame.pack_propagate(False) 
         
         title = tk.Label(header_frame, text="tessell", 
                         font=("Segoe UI", 28, "bold"), fg=THEME["text_main"], bg=THEME["bg_header"])
@@ -132,12 +135,7 @@ class VoiceFileFinderGUI:
     
     def log(self, message, level="INFO"):
         timestamp = time.strftime("%H:%M:%S")
-        colors = {
-            "INFO": "#000000",
-            "ERROR": "#c94c4c",
-            "SUCCESS": "#2e7d32",
-            "WARN": "#d68910"
-        }
+        colors = { "INFO": "#000000", "ERROR": "#c94c4c", "SUCCESS": "#2e7d32", "WARN": "#d68910" }
         prefix_colors = {"INFO": "💬", "ERROR": "❌", "SUCCESS": "✅", "WARN": "⚠️"}
         
         prefix = prefix_colors.get(level, "💬")
@@ -151,20 +149,14 @@ class VoiceFileFinderGUI:
         
     def update_status(self, main_text, sub_text="", color_override=None):
         final_color = color_override if color_override else THEME["text_main"]
-        
         self.status_label.config(text=main_text, fg=final_color)
         self.sub_status.config(text=sub_text)
         
         dot_colors = {
-            "INITIALIZING": "#808080", 
-            "READY": THEME["accent_green"], 
-            "MONITORING": THEME["accent_blue"],
-            "LISTENING": "#e67e22",
-            "CONFIRM": "#9b59b6",
-            "STOPPED": THEME["accent_red"], 
-            "ERROR": THEME["accent_red"]
+            "INITIALIZING": "#808080", "READY": THEME["accent_green"], 
+            "MONITORING": THEME["accent_blue"], "LISTENING": "#e67e22",
+            "CONFIRM": "#9b59b6", "STOPPED": THEME["accent_red"], "ERROR": THEME["accent_red"]
         }
-        
         for key, dot_color in dot_colors.items():
             if key in main_text:
                 self.status_dot.config(fg=dot_color)
@@ -175,26 +167,22 @@ class VoiceFileFinderGUI:
         if folder:
             self.search_path = folder
             self.log(f"Folder selected: {folder}")
-            if self.components_ready:
-                self.auto_start()
+            if self.components_ready: self.auto_start()
         else:
             self.search_path = os.getcwd()
             self.log(f"No folder selected. Using: {self.search_path}")
-            if self.components_ready:
-                self.auto_start()
+            if self.components_ready: self.auto_start()
     
     def auto_start(self):
         self.root.after(500, self.start_system)
     
     def initialize_components(self):
         self.log("Loading speech recognition models...")
-        
         MODEL_PATH = resource_path("model")
         if not os.path.exists(MODEL_PATH):
             self.log(f"ERROR: Model not found at {MODEL_PATH}", "ERROR")
             self.update_status("❌ ERROR", "Model files missing!", THEME["accent_red"])
             return
-        
         try:
             self.vosk_model = Model(MODEL_PATH)
             self.google_recognizer = sr.Recognizer()
@@ -206,7 +194,6 @@ class VoiceFileFinderGUI:
         
         self.log("Scanning for ESP32...")
         port = self.find_esp32_port()
-        
         if not port:
             self.log("ERROR: ESP32 not found. Plug it in!", "ERROR")
             self.update_status("❌ ESP32 NOT FOUND", "Please plug in your device", THEME["accent_red"])
@@ -226,30 +213,23 @@ class VoiceFileFinderGUI:
         self.log("System ready! Opening folder selector...")
         self.folder_btn.config(state=tk.NORMAL)
         self.components_ready = True
-        
-        # Auto-open folder selector
         self.root.after(500, self.select_folder)
     
     def find_esp32_port(self):
         ports = list(serial.tools.list_ports.comports())
         for p in ports:
             if "CP210" in p.description or "CH340" in p.description or "USB" in p.description:
-                self.log(f"Found ESP32 on {p.device}")
                 return p.device
-        if len(ports) > 0:
-            return ports[-1].device
-        return None
+        return ports[-1].device if ports else None
     
     def start_system(self):
         if not self.search_path:
             self.log("Please select a folder first!", "WARN")
             return
-        
         self.running = True
         self.start_btn.config(state=tk.DISABLED)
         self.stop_btn.config(state=tk.NORMAL)
         self.folder_btn.config(state=tk.DISABLED)
-        
         self.update_status("🎤 MONITORING", "Say: 'Search for [filename]'", THEME["accent_blue"])
         self.log("🎤 Listening for voice commands...")
         threading.Thread(target=self.voice_loop, daemon=True).start()
@@ -262,9 +242,7 @@ class VoiceFileFinderGUI:
         self.update_status("⏹️ STOPPED", "Click 'Start' to resume", THEME["accent_red"])
         self.log("System stopped.")
     
-#ping
     def check_connection(self):
-        """Ping Google DNS to see if internet is fast enough"""
         try:
             socket.create_connection(("8.8.8.8", 53), timeout=1)
             return True
@@ -273,34 +251,22 @@ class VoiceFileFinderGUI:
 
     def get_text_from_audio(self, wav_filename):
         is_online = self.check_connection()
-
         if is_online:
             try:
                 start_time = time.time()
                 with sr.AudioFile(wav_filename) as source:
                     audio_data = self.google_recognizer.record(source)
-                
                 self.google_recognizer.energy_threshold = 300
                 text = self.google_recognizer.recognize_google(audio_data, language="en-US")
-                
                 latency = time.time() - start_time
                 if latency > MAX_GOOGLE_LATENCY:
                     self.log(f"Google slow ({latency:.1f}s), Using Vosk next time.", "WARN")
-                
                 self.log(f"--> [ONLINE] Google ({latency:.1f}s)", "SUCCESS")
                 return text
-                
-            except sr.RequestError:
-                self.log("Google API error. Falling back to Vosk.", "WARN")
-                return self.get_text_from_audio_vosk(wav_filename)
-            except sr.UnknownValueError:
-                self.log("Google detected noise.", "WARN")
-                return ""
             except Exception as e:
                 self.log(f"Google Error: {e}. Switching to Vosk.", "WARN")
                 return self.get_text_from_audio_vosk(wav_filename)
         else:
-            self.log("No Internet. Using Offline Mode (Vosk).", "WARN")
             return self.get_text_from_audio_vosk(wav_filename)
     
     def get_text_from_audio_vosk(self, wav_filename):
@@ -309,15 +275,12 @@ class VoiceFileFinderGUI:
             rec = KaldiRecognizer(self.vosk_model, wf.getframerate())
             rec.SetMaxAlternatives(0)
             rec.SetWords(False)
-            
             while True:
                 data = wf.readframes(4000)
                 if len(data) == 0: break
                 rec.AcceptWaveform(data)
-            
             result = json.loads(rec.FinalResult())
             wf.close()
-            
             text = result.get('text', '')
             if text: self.log(f"--> [OFFLINE] Vosk matched: '{text}'", "SUCCESS")
             return text
@@ -328,19 +291,15 @@ class VoiceFileFinderGUI:
     def find_file(self, filename):
         self.log(f"Searching for: '{filename}' in {self.search_path}")
         self.ser.write(b"SEARCHING\n")
-        
         matches = []
         for root, dirs, files in os.walk(self.search_path):
             for file in files:
                 file_lower = file.lower()
                 filename_lower = filename.lower()
-                
                 score = difflib.SequenceMatcher(None, filename_lower, file_lower).ratio()
                 if filename_lower in file_lower: score = max(score, 0.8)
-                
                 if score > 0.4:
                     matches.append({'path': os.path.join(root, file), 'name': file, 'score': score})
-        
         matches.sort(key=lambda x: x['score'], reverse=True)
         
         if len(matches) == 0:
@@ -357,38 +316,44 @@ class VoiceFileFinderGUI:
             return matches 
 
     def show_file_popup(self, items):
-        """Show popup for voice confirmation - THEMED"""
+        """Show popup with SCROLLBAR for unlimited items"""
         self.popup_window = tk.Toplevel(self.root)
         self.popup_window.title("File Found")
         self.popup_window.attributes("-topmost", True)
-        self.popup_window.configure(bg=THEME["bg_header"]) # Themed
+        self.popup_window.configure(bg=THEME["bg_header"]) 
         
         if isinstance(items, str):
             filename = os.path.basename(items)
             self.popup_window.geometry("500x250")
-            
             tk.Label(self.popup_window, text="📁 File Found!", 
                     font=("Segoe UI", 16, "bold"), fg=THEME["accent_green"], bg=THEME["bg_header"]).pack(pady=15)
-            
             tk.Label(self.popup_window, text=filename, 
                     font=("Segoe UI", 12), fg=THEME["text_main"], bg=THEME["bg_header"]).pack(pady=5)
-            
             tk.Label(self.popup_window, text="🎤 Say 'YES' / 'OPEN' to open\nSay 'NO' / 'CLOSE' to cancel", 
                     font=("Segoe UI", 14, "bold"), fg=THEME["accent_blue"], bg=THEME["bg_header"]).pack(pady=20)
-            
         else:
-            self.popup_window.geometry("500x400")
+            self.popup_window.geometry("500x500")
+            
             tk.Label(self.popup_window, text=f"📁 Found {len(items)} Files", 
                     font=("Segoe UI", 16, "bold"), fg=THEME["accent_green"], bg=THEME["bg_header"]).pack(pady=10)
             
             list_frame = tk.Frame(self.popup_window, bg=THEME["bg_header"])
-            list_frame.pack(fill=tk.BOTH, expand=True, padx=20)
+            list_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=5)
             
-            for i, match in enumerate(items[:5], 1):
-                tk.Label(list_frame, text=f"{i}. {match['name']}", 
-                        font=("Segoe UI", 10), fg=THEME["text_main"], bg=THEME["bg_header"], anchor="w").pack(fill=tk.X)
+            scrollbar = tk.Scrollbar(list_frame)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
             
-            tk.Label(self.popup_window, text="🎤 Say the NUMBER or 'CLOSE'", 
+            self.listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set, 
+                                     font=("Segoe UI", 11), bg="#fff0f5", fg=THEME["text_main"], 
+                                     selectbackground=THEME["accent_blue"], bd=0, highlightthickness=0)
+            self.listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            
+            scrollbar.config(command=self.listbox.yview)
+            
+            for i, match in enumerate(items, 1):
+                self.listbox.insert(tk.END, f" {i}. {match['name']}")
+
+            tk.Label(self.popup_window, text="🎤 Say ANY NUMBER to open", 
                     font=("Segoe UI", 12, "bold"), fg=THEME["accent_blue"], bg=THEME["bg_header"]).pack(pady=15)
         
         self.popup_window.protocol("WM_DELETE_WINDOW", lambda: None)
@@ -399,6 +364,40 @@ class VoiceFileFinderGUI:
                 self.popup_window.destroy()
                 self.popup_window = None
         except: pass
+
+    def text_to_number(self, text):
+        """Converts text like 'twenty three' or '45' into an integer"""
+        try:
+            return int(text)
+        except:
+            pass
+        
+        units = {
+            "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, 
+            "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+            "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15,
+            "sixteen": 16, "seventeen": 17, "eighteen": 18, "nineteen": 19,
+        }
+        tens = {
+            "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, 
+            "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90
+        }
+        
+        words = text.lower().replace("-", " ").split()
+        number = 0
+        current = 0
+        
+        for w in words:
+            if w in units:
+                current += units[w]
+            elif w in tens:
+                current += tens[w]
+            elif w == "hundred":
+                current *= 100
+            elif w.isdigit():
+                current += int(w)
+        
+        return current if current > 0 else None
 
     def voice_loop(self):
         buffer = bytearray()
@@ -412,22 +411,17 @@ class VoiceFileFinderGUI:
                 if self.ser.in_waiting > 0:
                     raw = self.ser.read(self.ser.in_waiting)
                     
-                    if not recording:
-                        try:
-                            if "START_REC" in raw.decode('utf-8', errors='ignore'):
-                                recording = True
-                                buffer = bytearray()
-                                self.log("🎙️ Recording...")
-                                self.update_status("🎙️ LISTENING", "Speak now...", "#e67e22")
-                        except: pass
+                    if not recording and "START_REC" in raw.decode('utf-8', errors='ignore'):
+                        recording = True
+                        buffer = bytearray()
+                        self.log("🎙️ Recording...")
+                        self.update_status("🎙️ LISTENING", "Speak now...", "#e67e22")
                     
                     if recording:
                         buffer.extend(raw)
-                        
                         if b"STOP_REC" in buffer:
                             recording = False
                             clean_audio = buffer.split(b"STOP_REC")[0]
-                            
                             with wave.open(TEMP_WAV, 'wb') as wf:
                                 wf.setnchannels(1)
                                 wf.setsampwidth(2)
@@ -436,69 +430,50 @@ class VoiceFileFinderGUI:
                             
                             try:
                                 text = self.get_text_from_audio(TEMP_WAV)
-                                
-                                if text and text.strip() != "":
+                                if text and text.strip():
                                     self.log(f'You said: "{text}"', "SUCCESS")
                                     text = text.lower()
                                     
                                     if waiting_for_confirmation:
                                         if pending_file:
-                                            if any(w in text for w in ["open", "yes", "yeah", "sure", "ok", "confirm"]):
-                                                self.log("Opening file...")
+                                            if any(w in text for w in ["open", "yes", "ok", "confirm"]):
                                                 self.close_popup()
-                                                try:
-                                                    os.startfile(pending_file)
-                                                    self.ser.write(b"OPENED\n")
-                                                    self.log("✓ File opened!", "SUCCESS")
-                                                except:
-                                                    self.log("✗ Error opening file", "ERROR")
-                                                waiting_for_confirmation = False
-                                                pending_file = None
+                                                os.startfile(pending_file)
+                                                self.ser.write(b"OPENED\n")
+                                                self.log("✓ File opened!", "SUCCESS")
+                                                waiting_for_confirmation = False; pending_file = None
                                                 self.update_status("🎤 MONITORING", "Say: 'Search for [filename]'", THEME["accent_blue"])
-                                                
-                                            elif any(w in text for w in ["close", "no", "nope", "cancel", "stop"]):
-                                                self.log("Cancelled.")
+                                            elif any(w in text for w in ["close", "no", "cancel"]):
                                                 self.close_popup()
                                                 self.ser.write(b"CANCELLED\n")
-                                                waiting_for_confirmation = False
-                                                pending_file = None
+                                                waiting_for_confirmation = False; pending_file = None
                                                 self.update_status("🎤 MONITORING", "Say: 'Search for [filename]'", THEME["accent_blue"])
-                                                
-                                            else:
-                                                self.log("Say 'YES' or 'NO'", "WARN")
                                         
                                         elif pending_matches:
                                             if any(w in text for w in ["close", "no", "cancel"]):
-                                                self.log("Cancelled.")
                                                 self.close_popup()
-                                                waiting_for_confirmation = False
-                                                pending_matches = None
+                                                waiting_for_confirmation = False; pending_matches = None
                                                 self.update_status("🎤 MONITORING", "Say: 'Search for [filename]'", THEME["accent_blue"])
                                             else:
-                                                nums = {"one":1, "1":1, "two":2, "2":2, "three":3, "3":3, "four":4, "4":4, "five":5, "5":5}
-                                                choice = None
-                                                for w in text.split():
-                                                    if w in nums: choice = nums[w]
+                                                choice = self.text_to_number(text)
                                                 
                                                 if choice and 1 <= choice <= len(pending_matches):
                                                     selected = pending_matches[choice-1]['path']
                                                     self.close_popup()
                                                     os.startfile(selected)
+                                                    self.ser.write(b"OPENED\n")
                                                     self.log(f"Opened file {choice}", "SUCCESS")
-                                                    waiting_for_confirmation = False
-                                                    pending_matches = None
+                                                    waiting_for_confirmation = False; pending_matches = None
                                                     self.update_status("🎤 MONITORING", "Say: 'Search for [filename]'", THEME["accent_blue"])
-                                        
+                                                else:
+                                                    self.log(f"Invalid number. Pick 1-{len(pending_matches)}", "WARN")
                                     else:
                                         valid_triggers = ["search", "find", "open"]
                                         found_trigger = False
                                         command_word = ""
-                                        
                                         for trigger in valid_triggers:
                                             if trigger in text:
-                                                found_trigger = True
-                                                command_word = trigger
-                                                break
+                                                found_trigger = True; command_word = trigger; break
                                         
                                         if found_trigger:
                                             filename = text.split(command_word, 1)[1].replace("for", "").strip()
@@ -507,29 +482,21 @@ class VoiceFileFinderGUI:
                                                 if result:
                                                     waiting_for_confirmation = True
                                                     if isinstance(result, list):
-                                                        pending_matches = result
-                                                        pending_file = None
+                                                        pending_matches = result; pending_file = None
                                                         self.show_file_popup(result)
                                                         self.update_status("❓ CONFIRM", "Say the NUMBER", "#9b59b6")
                                                     else:
-                                                        pending_file = result
-                                                        pending_matches = None
+                                                        pending_file = result; pending_matches = None
                                                         self.show_file_popup(result)
                                                         self.update_status("❓ CONFIRM", "Say YES or NO", "#9b59b6")
                                                 else:
                                                     self.update_status("🎤 MONITORING", "Say: 'Search for [filename]'", THEME["accent_blue"])
-                                            else:
-                                                self.update_status("🎤 MONITORING", "Say: 'Search for [filename]'", THEME["accent_blue"])
-                                        else:
-                                            self.update_status("🎤 MONITORING", "Say: 'Search for [filename]'", THEME["accent_blue"])
-                                
                             except Exception as e:
                                 self.log(f"Process Error: {e}", "ERROR")
                             buffer = bytearray()
                 time.sleep(0.01)
             except Exception as e:
-                self.log(f"Loop Error: {e}", "ERROR")
-                break
+                self.log(f"Loop Error: {e}", "ERROR"); break
 
 if __name__ == "__main__":
     root = tk.Tk()
