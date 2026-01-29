@@ -8,37 +8,38 @@
 #define I2S_PORT I2S_NUM_0
 #define BUZZER_PIN 4
 
-#define BUZZER_VOLUME 225
-#define BUZZER_FREQ 2000   
-#define BUZZER_RES 8       
-
 LiquidCrystal_I2C lcd(0x27, 16, 2); 
 
 #define SAMPLE_RATE 16000
 #define BUFFER_LEN 512
 #define SOUND_THRESHOLD 3000   
 #define SILENCE_DURATION 1500 
-
 #define PRE_BUF_SIZE 4000 
+
 int16_t preBuffer[PRE_BUF_SIZE];
 volatile int preBufferHead = 0; 
-
 volatile bool isRecording = false;
 volatile int32_t currentVolume = 0;
-
 TaskHandle_t Task1;
 
+byte bar1[8] = {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x1F};
+byte bar2[8] = {0x00,0x00,0x00,0x00,0x00,0x00,0x1F,0x1F};
+byte bar3[8] = {0x00,0x00,0x00,0x00,0x00,0x1F,0x1F,0x1F};
+byte bar4[8] = {0x00,0x00,0x00,0x1F,0x1F,0x1F,0x1F,0x1F};
+byte bar5[8] = {0x1F,0x1F,0x1F,0x1F,0x1F,0x1F,0x1F,0x1F};
+
 void setup() {
-  Serial.begin(921600);
-  
-  // Turn off buzzer IMMEDIATELY before anything else
-  pinMode(BUZZER_PIN, OUTPUT);
-  digitalWrite(BUZZER_PIN, HIGH);  // Ensure buzzer is OFF
+  Serial.begin(921600); 
   
   lcd.init(); lcd.backlight();
+  pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, HIGH); 
 
-  ledcAttach(BUZZER_PIN, BUZZER_FREQ, BUZZER_RES);
-  ledcWrite(BUZZER_PIN, 255); // Turn buzzer OFF (inverted logic)
+  lcd.createChar(0, bar1);
+  lcd.createChar(1, bar2);
+  lcd.createChar(2, bar3);
+  lcd.createChar(3, bar4);
+  lcd.createChar(4, bar5);
 
   const i2s_config_t i2s_config = {
     .mode = i2s_mode_t(I2S_MODE_MASTER | I2S_MODE_RX),
@@ -54,28 +55,23 @@ void setup() {
   i2s_start(I2S_PORT);
 
   memset(preBuffer, 0, sizeof(preBuffer));
-  lcd.setCursor(0,0); lcd.print("System Ready");
-  
   xTaskCreatePinnedToCore(MicTask, "MicTask", 10000, NULL, 1, &Task1, 0); 
+  
+  lcd.setCursor(0,0); lcd.print("System Ready");
 }
 
-// core 0 mic 
 void MicTask(void * parameter) {
   size_t bytes_read;
   int32_t raw_buffer[BUFFER_LEN];
-  
   for(;;) { 
     i2s_read(I2S_PORT, &raw_buffer, BUFFER_LEN * 4, &bytes_read, portMAX_DELAY);
-    
     if (bytes_read > 0) {
       long sum = 0;
       int16_t processed_chunk[BUFFER_LEN];
-
       for (int i = 0; i < bytes_read / 4; i++) {
-        int16_t val = raw_buffer[i] >> 10; 
+        int16_t val = raw_buffer[i] >> 11; 
         processed_chunk[i] = val;
         sum += abs(val);
-
         if (!isRecording) {
           preBuffer[preBufferHead] = val;
           preBufferHead++;
@@ -83,55 +79,63 @@ void MicTask(void * parameter) {
         }
       }
       currentVolume = sum / (bytes_read / 4);
-
-      if (isRecording) {
-         Serial.write((const uint8_t *)processed_chunk, (bytes_read / 4) * 2);
-      }
+      if (isRecording) Serial.write((const uint8_t *)processed_chunk, (bytes_read / 4) * 2);
     }
   }
 }
 
-// core 1 main
+void updateVisualizer() {
+  int bars = map(currentVolume, 500, 10000, 0, 16);
+  if (bars > 16) bars = 16;
+  
+  lcd.setCursor(0, 1);
+  for (int i = 0; i < 16; i++) {
+    if (i < bars) {
+      if (bars < 5) lcd.write(0);
+      else if (bars < 10) lcd.write(2);
+      else lcd.write(4);
+    } else {
+      lcd.print(" ");
+    }
+  }
+}
+
 void loop() {
   static unsigned long lastAudioTime = 0;
+  static unsigned long lastVisTime = 0;
+  static bool systemBusy = false;
 
   if (Serial.available() > 0) {
     String msg = Serial.readStringUntil('\n');
     msg.trim();
-    if (msg == "PYTHON_READY") { 
-      // Python connected, do nothing (no beep)
+    
+    if (msg == "SEARCHING") { 
+      systemBusy = true; 
+      lcd.clear(); lcd.print("Searching..."); 
     }
-    else if (msg == "SEARCHING") { lcd.clear(); lcd.print("Searching..."); }
     else if (msg == "FOUND") { 
+      systemBusy = true;
       lcd.clear(); lcd.print("File Found!"); 
-      
-      // Beep twice to indicate file found
-      ledcWrite(BUZZER_PIN, BUZZER_VOLUME); delay(100); ledcWrite(BUZZER_PIN, 255);
+      digitalWrite(BUZZER_PIN, LOW); delay(30); digitalWrite(BUZZER_PIN, HIGH);
       delay(100);
-      ledcWrite(BUZZER_PIN, BUZZER_VOLUME); delay(100); ledcWrite(BUZZER_PIN, 255);
+      digitalWrite(BUZZER_PIN, LOW); delay(30); digitalWrite(BUZZER_PIN, HIGH);
+      delay(3000);
+      lcd.clear(); lcd.print("System Ready");
+      systemBusy = false;
     }
     else if (msg == "NOTFOUND") { 
+      systemBusy = true;
       lcd.clear(); lcd.print("Not Found"); 
       delay(2000);
       lcd.clear(); lcd.print("System Ready");
+      systemBusy = false;
     }
-    else if (msg == "ASK_CONFIRM") {
-      lcd.clear(); lcd.print("Say OPEN/CLOSE");
-    }
-    else if (msg == "OPENED") {
-      lcd.clear(); lcd.print("Opening File...");
-      delay(1500);
-      lcd.clear(); lcd.print("System Ready");
-    }
-    else if (msg == "CANCELLED") {
-      lcd.clear(); lcd.print("Cancelled");
-      delay(1500);
-      lcd.clear(); lcd.print("System Ready");
-    }
-    else if (msg == "ERROR") {
-      lcd.clear(); lcd.print("Error!");
-      delay(2000);
-      lcd.clear(); lcd.print("System Ready");
+  }
+
+  if (!systemBusy && !isRecording) {
+    if (millis() - lastVisTime > 100) {
+      updateVisualizer();
+      lastVisTime = millis();
     }
   }
 
@@ -140,17 +144,23 @@ void loop() {
     Serial.print("START_REC\n");
     lastAudioTime = millis();
     lcd.clear(); lcd.print("Listening...");
-
+    
     int len1 = PRE_BUF_SIZE - preBufferHead;
     if (len1 > 0) Serial.write((const uint8_t *)&preBuffer[preBufferHead], len1 * 2);
     if (preBufferHead > 0) Serial.write((const uint8_t *)&preBuffer[0], preBufferHead * 2);
     
     while (isRecording) {
       if (currentVolume > SOUND_THRESHOLD) lastAudioTime = millis();
+      
+      if (millis() - lastVisTime > 100) {
+        updateVisualizer();
+        lastVisTime = millis();
+      }
+
       if (millis() - lastAudioTime > SILENCE_DURATION) {
         isRecording = false;
         Serial.print("STOP_REC");
-        lcd.clear(); lcd.print("System Ready");
+        lcd.clear(); lcd.print("Processing...");
       }
       delay(10); 
     }
