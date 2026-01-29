@@ -151,7 +151,7 @@ class VoiceFileFinderGUI(ctk.CTk):
                                     fg_color="#555555", hover_color="#666666", font=("Segoe UI", 12))
         self.help_btn.grid(row=5, column=0, padx=20, pady=20, sticky="ew")
 
-        self.info_label = ctk.CTkLabel(self.sidebar, text="Capstone 2025", text_color="gray60")
+        self.info_label = ctk.CTkLabel(self.sidebar, text="Capstone Group 3 Malachi", text_color="gray60")
         self.info_label.grid(row=7, column=0, padx=20, pady=20)
 
         self.main_area = ctk.CTkFrame(self, fg_color="transparent")
